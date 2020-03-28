@@ -1,0 +1,115 @@
+#!/usr/bin/env sh
+
+# For macOS
+#
+# This script unloads VirtualBox kernel extentions and then loads osxfuse
+# kernel extensions, or vice versa. This is a workaround due to the limit of
+# virtual devices provided by macOS.
+#
+# See https://github.com/osxfuse/osxfuse/issues/315.
+# Based on https://github.com/osxfuse/osxfuse/issues/315#issuecomment-271548072
+
+
+# Define usage
+read -r -d '' USAGE <<-EOF
+	kextswap - Swap VirtualBox and FUSE kernel extensions.
+
+	Usage: kextswap <status|vbox|fuse>
+	    status - Show loaded vbox and fuse kexts.
+	    vbox   - Unload all fuse kexts and load all vbox kexts.
+	    fuse   - Unload all vbox kexts and load all fuse kexts.
+
+	Loading and unloading kexts requires running as root.
+EOF
+
+
+# Display usage and exit if the first argument is not in (status, vbox, fuse)
+if [ "$1" != "status" ] && [ "$1" != "vbox" ] && [ "$1" != "fuse" ]
+then
+    echo "$USAGE"
+    exit 1
+fi
+
+
+# Virtualbox kexts
+VBOX_KEXT_DIR="/Library/Application Support/VirtualBox"
+VBOX_KEXT_PREFIX="org.virtualbox.kext"
+VBOX_KEXT_NAMES=(VBoxDrv VBoxNetAdp VBoxNetFlt VBoxUSB)
+
+
+# osxfuse kexts
+FUSE_EXT_DIR="/Library/Filesystems/osxfuse.fs/Contents/Extensions"
+FUSE_VERSION="$(ls $FUSE_EXT_DIR | sort -V | tail -n 1)"
+FUSE_KEXT_DIR="$FUSE_EXT_DIR/$FUSE_VERSION"
+FUSE_KEXT_PREFIX="com.github.osxfuse.filesystems"
+FUSE_KEXT_NAMES=(osxfuse)
+
+
+# Function to verify kextswap is being run as root.
+# Exit with error if it is not.
+check_privileges()
+{
+    if [ "$(whoami)" != "root" ]
+    then
+        echo "kextswap must be run as root to load/unload kexts"
+        exit 1
+    fi
+}
+
+
+# Display all loaded VirtualBox and osxfuse kexts
+if [ "$1" == "status" ]
+then
+    kextstat | \
+    grep -e "$VBOX_KEXT_PREFIX" -e "$FUSE_KEXT_PREFIX" | \
+    awk '{print $6}' | \
+    sort
+fi
+
+
+# Unload all osxfuse kexts and load all VirtualBox kexts
+if [ "$1" == "vbox" ]
+then
+
+    # Check status
+    check_privileges
+
+    # Unload all loaded osxfuse kexts
+    kextstat | grep "$FUSE_KEXT_PREFIX" | awk '{print $6}' | while read -r kext
+    do
+        echo "Unloading $kext"
+        kextunload -b "$kext"
+    done
+
+    # Load all available VirtualBox kexts
+    for kext in "$VBOX_KEXT_DIR/"*.kext
+    do
+        echo "Loading $kext"
+        kextload "$kext" -r "$VBOX_KEXT_DIR"
+    done
+
+fi
+
+
+# Unload all VirtualBox kexts and load all osxfuse kexts
+if [ "$1" == "fuse" ]
+then
+
+    # Check status
+    check_privileges
+
+    # Unload all loaded VirtualBox kexts
+    kextstat | grep "$VBOX_KEXT_PREFIX" | awk '{print $6}' | while read -r kext
+    do
+        echo "Unloading $kext"
+        kextunload -b "$kext"
+    done
+
+    # Load all available osxfuse kexts
+    for kext in "$FUSE_KEXT_DIR/"*.kext
+    do
+        echo "Loading $kext"
+        kextload "$kext" -r "$VBOX_KEXT_DIR"
+    done
+
+fi
